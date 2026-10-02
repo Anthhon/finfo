@@ -13,6 +13,8 @@ parser:option("-a --analyze", "Operation to perform on target file.")
 
 local args = parser:parse()
 
+io.stdout:write("\27[1m[ƒi∩ƒ0]\27[0m\n")
+
 -- Getting file content
 local content, err = HELPER.fileRead(args.file)
 if not content then
