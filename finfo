@@ -28,7 +28,7 @@ io.stderr:write(("Read %d bytes from '%s'\n"):format(#content, args.file))
 if args.analyze == "info" then
     local elf, why = ELF.parseHeader(content)
     if not elf then
-        io.stderr:write("error: ", err, "\n")
+        io.stderr:write("error: ", why, "\n")
         os.exit(2)
     end
 
