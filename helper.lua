@@ -6,8 +6,11 @@ function HELPER.fileRead(path)
         return nil, err
     end
 
-    local content = f:read("*all")
+    local content, rerr = f:read("a")
     f:close()
+    if not content then
+        return nil, rerr
+    end
     return content
 end
 

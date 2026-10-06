@@ -1,6 +1,7 @@
 local ELF = {}
 
 ELF.MAGICNUM = "\x7F\x45\x4C\x46"
+ELF.SHT_NOBITS = 8 -- BSS section (has no data)
 
 ELF.CLASS = {
     [1] = "32-bit",
@@ -82,7 +83,7 @@ function ELF.parseHeader(data)
     -- Gets header size based on bits data size
     local header_size
     if class == 1 then
-        header_size = 32
+        header_size = 52
     elseif class == 2 then
         header_size = 64
     else
@@ -175,6 +176,158 @@ function ELF.parseHeader(data)
         shnum = shnum,
         shstrndx = shstrndx,
     }
+end
+
+-- Parse section header table. Returns list of sections, or nil + err
+function ELF.parseSections(data)
+    local header, err = ELF.parseHeader(data)
+    if not header then
+        return nil, err
+    end
+
+    if header.shoff == 0 or header.shnum == 0 then
+        return nil, "file has no section header table"
+    end
+
+    local class = data:byte(5)
+    local endianness = data:byte(6)
+
+    -- Get file endianness
+    local endian
+    if endianness == 1 then
+        endian = "<"
+    elseif endianness == 2 then
+        endian = ">"
+    else
+        return nil, "invalid ELF data encoding"
+    end
+
+    -- Check for valid section header size
+    local min_ent = (class == 1) and 40 or 64
+    if header.shentsize < min_ent then
+        return nil, "invalid section header entry size"
+    end
+
+    -- Iterates through each section
+    local sections = {}
+    for i = 0, header.shnum - 1 do
+        local pos = header.shoff + i * header.shentsize + 1
+        if pos + header.shentsize - 1 > #data then
+            return nil, "section header table out of file bounds"
+        end
+
+        -- Format info to new section based on indianness
+        local s = {}
+        if class == 1 then
+            -- ELF32 => name, type, flags, addr, offset, size (all 4 bytes)
+            s.name_off, s.type, s.flags, s.addr, s.offset, s.size =
+                string.unpack(endian .. "I4I4I4I4I4I4", data, pos)
+        else
+            -- ELF64 => name,type (4 bytes), flags,addr,offset,size (8 bytes)
+            s.name_off, s.type, s.flags, s.addr, s.offset, s.size =
+                string.unpack(endian .. "I4I4I8I8I8I8", data, pos)
+        end
+
+        sections[#sections + 1] = s
+    end
+
+    -- Resolve names using section-name string table
+    local strtab = sections[header.shstrndx + 1]
+    if not strtab then
+        return nil, "invalid section name string table index"
+    end
+    if strtab.offset + strtab.size > #data then
+        return nil, "section name string table out of file bounds"
+    end
+
+    for _, s in ipairs(sections) do
+        if s.name_off >= strtab.size then
+            return nil, "section name offset out of bounds"
+        end
+        local ok, name = pcall(string.unpack, "z", data, strtab.offset + s.name_off + 1)
+        if not ok then
+            return nil, "bad section name"
+        end
+        s.name = name
+    end
+
+    return sections
+end
+
+-- Get only ASCII printable characters
+local function scanStrings(data, first, last)
+    local strings, current = {}, {}
+    for i = first, last do
+        local byte = data:byte(i)
+
+        if (byte >= 0x20 and byte <= 0x7E) or byte == 0x09 then
+            current[#current + 1] = string.char(byte)
+        else
+            if #current >= 4 then -- Size threshold to be added into table
+                strings[#strings + 1] = table.concat(current)
+            end
+            current = {}
+        end
+    end
+
+    -- flush run that ends at range end
+    if #current >= 4 then
+        strings[#strings + 1] = table.concat(current)
+    end
+    return strings
+end
+
+-- target nil = scan whole file after header (old behavior)
+function ELF.parseStrings(data, target)
+    local response = {}
+    local first, last = nil, #data
+
+    -- Parse all sections
+    local sections, err = ELF.parseSections(data)
+    if not sections then
+        return nil, err
+    end
+
+    -- Specified target
+    if target then
+        -- Search for target section into sections
+        for _, s in ipairs(sections) do
+            if s.name == target then
+                if s.type == ELF.SHT_NOBITS then
+                    return nil, "section '" .. target .. "' has no file content (NOBITS)"
+                end
+
+                -- Get strings
+                first, last = s.offset + 1, s.offset + s.size
+                local strings = scanStrings(data, first, last)
+
+                -- Append target name and strings into response
+                response[#response + 1] = {
+                    section_name = s.name,
+                    section_strings = strings
+                }
+
+                return response
+            end
+        end
+
+        return nil, "section '" .. target .. "' not found" -- In case no target is found
+    else -- No specific target
+        for _, s in ipairs(sections) do
+            -- Get strings
+            first, last = s.offset + 1, s.offset + s.size
+            local strings = scanStrings(data, first, last)
+            if #strings > 0 then
+                -- Append section name and strings into response
+                response[#response + 1] = {
+                    section_name = s.name,
+                    section_strings = strings
+                }
+            end
+        end
+
+        return response
+    end
 end
 
 return ELF
