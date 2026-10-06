@@ -260,7 +260,9 @@ local function scanStrings(data, first, last)
     for i = first, last do
         local byte = data:byte(i)
 
-        if (byte >= 0x20 and byte <= 0x7E) or byte == 0x09 then
+        -- WARNING: I do not exactly know why but not checking
+        -- for nil byte in this section can lead to errors
+        if byte ~= nil and ((byte >= 0x20 and byte <= 0x7E) or byte == 0x09) then
             current[#current + 1] = string.char(byte)
         else
             if #current >= 4 then -- Size threshold to be added into table
