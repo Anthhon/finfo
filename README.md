@@ -12,35 +12,72 @@ A small ELF file inspection tool written in Lua. Built to help with reverse engi
 
 ## Requirements
 
-- Lua 5.3 or newer (uses `string.unpack`)
-- [argparse](https://github.com/mpeterv/argparse) Lua library
+Only needed to **build** finfo. The resulting binary has no Lua dependency.
+
+- Lua 5.3 or newer (uses `string.unpack`) and its development files
+- [luastatic](https://github.com/ers35/luastatic)
+- [argparse](https://github.com/mpeterv/argparse) Lua library (bundled into the binary at build time)
+- `gcc`
 
 ```bash
+sudo apt install gcc lua5.4 liblua5.4-dev luarocks
+luarocks install luastatic
 luarocks install argparse
 ```
 
 ## Installation
 
+Clone the repository:
+
 ```bash
 git clone git@github.com:Anthhon/finfo.git
 cd finfo
-chmod +x finfo
 ```
 
-And if you want to be able to execute it from anywhere in your machine easily, create a symlink:
+Build the standalone binary. `luastatic` takes the main script first, then every module it `require`s, then the static Lua library:
 
 ```bash
-sudo ln -s "$(pwd)/finfo" /usr/local/bin/finfo
+cd src
+cp "$(luarocks show argparse | grep -o '/.*argparse\.lua' | head -n1)" . 2>/dev/null \
+  || wget -q https://raw.githubusercontent.com/mpeterv/argparse/master/src/argparse.lua
+
+luastatic finfo.lua elf.lua helper.lua argparse.lua \
+  /usr/lib/x86_64-linux-gnu/liblua5.4.a \
+  -I/usr/include/lua5.4 -lm -ldl -o ../finfo
+cd ..
+```
+
+If the build cannot find the Lua library, locate it with `find /usr -name 'liblua5.4.a'` and adjust the path. If the compiler errors on line 1 of `finfo.lua`, remove the `#!/usr/bin/env lua` shebang.
+
+Check the result:
+
+```bash
+file finfo   # ELF 64-bit executable
+ldd finfo    # only libc, no liblua
+```
+
+To run it from anywhere on your machine, install it into your `PATH`:
+
+```bash
+sudo install -m 755 finfo /usr/local/bin/finfo
 ```
 
 Now `finfo <file>` works from any directory. Remove with `sudo rm /usr/local/bin/finfo`.
+
+### Running without building
+
+You can still run it straight from source with an installed Lua interpreter:
+
+```bash
+lua src/finfo.lua <file>
+```
 
 ## How to use it
 
 You can ask for help directly to the tool by using the `-h` flag:
 
 ```bash
-$ ./finfo -h
+$ finfo -h
 Usage: finfo [-h] [-a {info,hexdump}] [-s {all,text,rodata}] <file>
 
 A simple ELF file inspection script
@@ -61,7 +98,7 @@ Options:
 Print ELF header info (default):
 
 ```bash
-./finfo /bin/ls
+finfo /bin/ls
 ```
 
 ```
@@ -80,7 +117,7 @@ Print ELF header info (default):
 Hexdump a file:
 
 ```bash
-./finfo -a hexdump /bin/ls
+finfo -a hexdump /bin/ls
 ```
 
 ```
@@ -90,7 +127,7 @@ Hexdump a file:
 Extract printable strings from a binary:
 
 ```bash
-./finfo -s all /bin/ls
+finfo -s all /bin/ls
 ```
 
 ```text
@@ -107,7 +144,7 @@ Extract printable strings from a binary:
 You can also focus on a specific section:
 
 ```bash
-./finfo -s rodata /bin/ls
+finfo -s rodata /bin/ls
 ```
 
 This walks the ELF section headers, finds the requested section, and prints printable ASCII runs at least 4 characters long. The `-s all` mode scans every section that contains readable strings; `-s text` and `-s rodata` are useful for quick reverse-engineering triage when you want to inspect the most common string-bearing sections without scanning the whole file.
